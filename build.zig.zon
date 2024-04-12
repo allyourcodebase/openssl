@@ -1,0 +1,19 @@
+.{
+    .name = "openssl",
+    .version = "3.3.0-dev",
+    .minimum_zig_version = "0.12.0-dev.3644+05d975576",
+
+    .dependencies = .{
+        .openssl = .{
+            .url = "https://github.com/openssl/openssl/releases/download/openssl-3.3.0/openssl-3.3.0.tar.gz",
+            .hash = "1220d9c400445c9c3ed46f71ebdbc364b7b349473231884c2f6e540817d7b68553ae",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "LICENSE",
+        "README.md",
+    },
+}
