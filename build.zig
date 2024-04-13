@@ -13,25 +13,34 @@ pub fn build(b: *std.Build) void {
     });
 
     const base_flags = [_][]const u8{
-        "-DOPENSSL_USE_NODELETE",
-        "-DL_ENDIAN",
-        "-DOPENSSL_BUILDING_OPENSSL",
         "-DAES_ASM",
-        "-DOPENSSLDIR=\"/usr/local/ssl\"",
         "-DENGINESDIR=\"/usr/local/lib64/engines-3\"",
+        "-DL_ENDIAN",
         "-DMODULESDIR=\"/usr/local/lib64/ossl-modules\"",
+        "-DOPENSSLDIR=\"/usr/local/ssl\"",
+        "-DOPENSSL_BUILDING_OPENSSL",
+        "-DOPENSSL_USE_NODELETE",
     };
 
     const crypto_flags = base_flags ++ [_][]const u8{
         "-DBSAES_ASM",
+        "-DCMLL_ASM",
         "-DECP_NISTZ256_ASM",
+        "-DGHASH_ASM",
         "-DKECCAK1600_ASM",
         "-DMD5_ASM",
+        "-DOPENSSL_BN_ASM_GF2m",
+        "-DOPENSSL_BN_ASM_MONT",
+        "-DOPENSSL_BN_ASM_MONT5",
+        "-DOPENSSL_CPUID_OBJ",
+        "-DOPENSSL_IA32_SSE2",
+        "-DPOLY1305_ASM",
         "-DRC4_ASM",
         "-DSHA1_ASM",
         "-DSHA256_ASM",
         "-DSHA512_ASM",
         "-DVPAES_ASM",
+        "-DWHIRLPOOL_ASM",
         "-DX25519_ASM",
     };
 
@@ -698,7 +707,7 @@ pub fn build(b: *std.Build) void {
             "ec/ecp_mont.c",
             "ec/ecp_nist.c",
             //"ec/ecp_nistp224.c",
-            //"ec/ecp_nistp256.c",
+            "ec/ecp_nistp256.c",
             //"ec/ecp_nistp384.c",
             //"ec/ecp_nistp521.c",
             //"ec/ecp_nistputil.c",
@@ -813,7 +822,7 @@ pub fn build(b: *std.Build) void {
             //"evp/legacy_md5_sha1.c",
             //"evp/legacy_mdc2.c",
             //"evp/legacy_ripemd.c",
-            //"evp/legacy_sha.c",
+            "evp/legacy_sha.c",
             //"evp/legacy_wp.c",
             "evp/m_null.c",
             "evp/m_sigver.c",
@@ -1171,6 +1180,42 @@ pub fn build(b: *std.Build) void {
         },
         .flags = &crypto_flags,
     });
+
+    switch (target.result.cpu.arch) {
+        .x86_64 => lib.addCSourceFiles(.{
+            .root = b.path("crypto"),
+            .files = &.{
+                "aes/aes-x86_64.s",
+                "aes/aesni-mb-x86_64.s",
+                "aes/aesni-sha1-x86_64.s",
+                "aes/aesni-sha256-x86_64.s",
+                "aes/aesni-x86_64.s",
+                "aes/bsaes-x86_64.s",
+                "aes/vpaes-x86_64.s",
+                "bn/rsaz-x86_64.s",
+                "camellia/cmll-x86_64.s",
+                "chacha/chacha-x86_64.s",
+                "ec/ecp_nistz256-x86_64.s",
+                "ec/x25519-x86_64.s",
+                "ec/x25519-x86_64.s",
+                "md5/md5-x86_64.s",
+                "modes/aesni-gcm-x86_64.s",
+                "modes/ghash-x86_64.s",
+                "poly1305/poly1305-x86_64.s",
+                "rc4/rc4-md5-x86_64.s",
+                "rc4/rc4-x86_64.s",
+                "sha/keccak1600-x86_64.s",
+                "sha/sha1-mb-x86_64.s",
+                "sha/sha1-x86_64.s",
+                "sha/sha256-mb-x86_64.s",
+                "sha/sha256-x86_64.s",
+                "sha/sha512-x86_64.s",
+                "whrlpool/wp-x86_64.s",
+            },
+            .flags = &crypto_flags,
+        }),
+        else => {},
+    }
 
     lib.addCSourceFiles(.{
         .root = b.path("crypto"),
