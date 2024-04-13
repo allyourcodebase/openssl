@@ -11,11 +11,12 @@
     },
 
     .paths = .{
-        "build.zig",
-        "build.zig.zon",
-        "include",
-        "crypto",
         "LICENSE",
         "README.md",
+        "build.zig",
+        "build.zig.zon",
+        "crypto",
+        "include",
+        "providers",
     },
 }
