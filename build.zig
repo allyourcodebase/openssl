@@ -12,12 +12,23 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const ssl_dir_flag = switch (target.result.os.tag) {
+        // This is not correct for all distros. This package will need to patch
+        // openssl to search at runtime for this directory.
+        .linux => "-DOPENSSLDIR=\"/etc/ssl\"",
+        .freebsd, .openbsd => "-DOPENSSLDIR=\"/etc/ssl\"",
+        .netbsd => "-DOPENSSLDIR=\"/etc/openssl\"",
+        .dragonfly => "-DOPENSSLDIR=\"/usr/local/etc/openssl\"",
+        .solaris, .illumos => "-DOPENSSLDIR=\"/etc/ssl\"",
+        else => "-DOPENSSLDIR=\"/etc/ssl\"",
+    };
+
     const base_flags = [_][]const u8{
         "-DAES_ASM",
-        "-DENGINESDIR=\"/usr/local/lib64/engines-3\"",
+        "-DENGINESDIR=\"/dev/null\"",
         "-DL_ENDIAN",
-        "-DMODULESDIR=\"/usr/local/lib64/ossl-modules\"",
-        "-DOPENSSLDIR=\"/usr/local/ssl\"",
+        "-DMODULESDIR=\"/dev/null\"",
+        ssl_dir_flag,
         "-DOPENSSL_BUILDING_OPENSSL",
         "-DOPENSSL_USE_NODELETE",
     };
