@@ -968,6 +968,9 @@ pub fn build(b: *std.Build) void {
     lib.addIncludePath(upstream.path("providers/implementations/include"));
     lib.addIncludePath(b.path("crypto"));
 
+    lib.installHeadersDirectory(upstream.path("include"), "", .{});
+    lib.installHeadersDirectory(b.path("include"), "", .{});
+
     lib.linkLibC();
     b.installArtifact(lib);
 }
