@@ -6,10 +6,12 @@ pub fn build(b: *std.Build) void {
 
     const upstream = b.dependency("openssl", .{});
 
-    const lib = b.addStaticLibrary(.{
+    const lib = b.addLibrary(.{
         .name = "openssl",
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        }),
     });
 
     const ssl_dir_flag = switch (target.result.os.tag) {

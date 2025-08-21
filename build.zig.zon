@@ -1,13 +1,13 @@
 .{
     .name = .openssl,
-    .version = "3.3.1-2",
+    .version = "3.3.1-3",
     .fingerprint = 0x773a47f1dd422f4c,
     .minimum_zig_version = "0.14.0",
 
     .dependencies = .{
         .openssl = .{
-            .url = "https://github.com/openssl/openssl/releases/download/openssl-3.3.0/openssl-3.3.0.tar.gz",
-            .hash = "N-V-__8AAIg12QPZxABEXJw-1G9x69vDZLezSUcyMYhML25U",
+            .url = "https://github.com/openssl/openssl/releases/download/openssl-3.3.1/openssl-3.3.1.tar.gz",
+            .hash = "N-V-__8AAANN2gM2hB03WFyIGqVokaBeFuMhFcccCeuDGrEi",
         },
     },
 
