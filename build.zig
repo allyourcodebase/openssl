@@ -373,22 +373,6 @@ pub fn build(b: *std.Build) void {
         .flags = &base_flags,
     });
 
-    switch (target.result.cpu.arch) {
-        .x86_64 => {
-            lib.addCSourceFiles(
-                .{
-                    .root = upstream.path("crypto"),
-                    .files = &.{
-                        "bn/asm/x86_64-gcc.c",
-                        "loongarchcap.c",
-                    },
-                    .flags = &crypto_flags,
-                },
-            );
-        },
-        else => {},
-    }
-
     lib.addCSourceFiles(.{
         .root = upstream.path("crypto"),
         .files = &.{
@@ -894,7 +878,6 @@ pub fn build(b: *std.Build) void {
             "kdf/kdf_err.c",
             "lhash/lh_stats.c",
             "lhash/lhash.c",
-            // "loongarchcap.c",
             //"md2/md2_dgst.c",
             //"md2/md2_one.c",
             "md4/md4_dgst.c",
@@ -1237,6 +1220,7 @@ pub fn build(b: *std.Build) void {
                 "whrlpool/wp-x86_64.s",
 
                 "x86_64cpuid.s",
+                "bn/asm/x86_64-gcc.c",
                 "bn/x86_64-gf2m.s",
                 "bn/x86_64-mont5.s",
                 "bn/x86_64-mont.s",
@@ -1249,6 +1233,19 @@ pub fn build(b: *std.Build) void {
             },
             .flags = &crypto_flags,
         }),
+        else => {},
+    }
+
+    switch (target.result.os.tag) {
+        .linux => {
+            lib.addCSourceFiles(.{
+                .root = b.path("crypto"),
+                .files = &.{
+                    "loongarchcap.c",
+                },
+                .flags = &crypto_flags,
+            });
+        },
         else => {},
     }
 
