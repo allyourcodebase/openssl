@@ -373,6 +373,22 @@ pub fn build(b: *std.Build) void {
         .flags = &base_flags,
     });
 
+    switch (target.result.cpu.arch) {
+        .x86_64 => {
+            lib.addCSourceFiles(
+                .{
+                    .root = upstream.path("crypto"),
+                    .files = &.{
+                        "bn/asm/x86_64-gcc.c",
+                        "loongarchcap.c",
+                    },
+                    .flags = &crypto_flags,
+                },
+            );
+        },
+        else => {},
+    }
+
     lib.addCSourceFiles(.{
         .root = upstream.path("crypto"),
         .files = &.{
@@ -497,7 +513,6 @@ pub fn build(b: *std.Build) void {
             "bio/bss_null.c",
             "bio/bss_sock.c",
             "bio/ossl_core_bio.c",
-            "bn/asm/x86_64-gcc.c",
             "bn/bn_add.c",
             "bn/bn_asm.c",
             "bn/bn_blind.c",
@@ -879,7 +894,7 @@ pub fn build(b: *std.Build) void {
             "kdf/kdf_err.c",
             "lhash/lh_stats.c",
             "lhash/lhash.c",
-            "loongarchcap.c",
+            // "loongarchcap.c",
             //"md2/md2_dgst.c",
             //"md2/md2_one.c",
             "md4/md4_dgst.c",
