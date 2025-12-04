@@ -21,7 +21,7 @@ pub fn build(b: *std.Build) void {
         .freebsd, .openbsd => "-DOPENSSLDIR=\"/etc/ssl\"",
         .netbsd => "-DOPENSSLDIR=\"/etc/openssl\"",
         .dragonfly => "-DOPENSSLDIR=\"/usr/local/etc/openssl\"",
-        .solaris, .illumos => "-DOPENSSLDIR=\"/etc/ssl\"",
+        .illumos => "-DOPENSSLDIR=\"/etc/ssl\"",
         else => "-DOPENSSLDIR=\"/etc/ssl\"",
     };
 
