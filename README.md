@@ -9,6 +9,12 @@ I was able to use this to build [CPython](https://github.com/thejoshwolfe/cpytho
 Adding support for other operating systems and CPU architectures is straightforward and will
 require fiddling with the build script to take into account the target.
 
+## Zig version compatibility
+
+- `0.16.x`
+- `0.15.x`
+- `0.14.x`
+
 ## Anti-Endorsement
 
 I do not endorse openssl. I think it is a pile of trash. My motivation for this
