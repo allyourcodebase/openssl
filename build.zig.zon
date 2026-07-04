@@ -2,7 +2,7 @@
     .name = .openssl,
     .version = "3.3.2",
     .fingerprint = 0x773a47f1dd422f4c,
-    .minimum_zig_version = "0.14.0",
+    .minimum_zig_version = "0.16.0",
 
     .dependencies = .{
         .openssl = .{
@@ -16,8 +16,10 @@
         "README.md",
         "build.zig",
         "build.zig.zon",
+        "config.zig",
+        "generate.zig",
+        "mingw-arm64.conf",
+        "gen",
         "crypto",
-        "include",
-        "providers",
     },
 }

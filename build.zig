@@ -1,10 +1,34 @@
 const std = @import("std");
+const config = @import("./config.zig");
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const upstream = b.dependency("openssl", .{});
+
+    // `zig build gen` refreshes the committed generated files (perlasm output
+    // under gen/ and the Configure/dofile template headers) by running the
+    // generate.zig program, which shells out to perl and writes the results
+    // straight into the source tree. Requires perl and a POSIX sh on PATH;
+    // normal builds consume the committed output and need neither.
+    const generator = b.addExecutable(.{
+        .name = "generate",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("generate.zig"),
+            .target = b.graph.host,
+            .optimize = optimize,
+        }),
+    });
+    const gen_run = b.addRunArtifact(generator);
+    gen_run.addDirectoryArg(upstream.path(""));
+    gen_run.addArg("--config");
+    // Supplies the mingw-arm64 target OpenSSL 3.3.2 lacks (harmless for the
+    // other variants).
+    gen_run.addFileArg(b.path("mingw-arm64.conf"));
+    gen_run.setCwd(b.path("."));
+    gen_run.has_side_effects = true;
+    b.step("gen", "regenerate asm and template-derived headers/sources").dependOn(&gen_run.step);
 
     const mod = b.createModule(.{
         .target = target,
@@ -13,19 +37,35 @@ pub fn build(b: *std.Build) void {
     });
     const lib = b.addLibrary(.{ .name = "openssl", .root_module = mod });
 
+    const variant = for (config.variants) |v| {
+        if (target.result.cpu.arch == v.arch and target.result.os.tag == v.os)
+            break v;
+    } else @panic("Unsupported target for OpenSSL: no asm variant configured");
+    const arch_config = config.archConfig(variant.arch);
+    // The directory under gen/ holding this variant's generated asm and
+    // target-dependent headers.
+    const gen_dir = config.dirName(variant, b.allocator) catch @panic("OOM");
+
+    // Roots for the committed generated tree: per-variant asm and headers live
+    // under gen/<arch>-<os>/, the target-independent generated files under
+    // gen/shared/ (see config.zig / generate.zig).
+    const asm_root = b.path(b.fmt("gen/{s}", .{gen_dir}));
+    const variant_include = b.path(b.fmt("gen/{s}/include", .{gen_dir}));
+    const shared_include = b.path("gen/shared/include");
+    const local_crypto = b.path("gen/shared/crypto");
+    const local_providers = b.path("gen/shared/providers");
+
     const ssl_dir_flag = switch (target.result.os.tag) {
         // This is not correct for all distros. This package will need to patch
-        // openssl to search at runtime for this directory.
-        .linux => "-DOPENSSLDIR=\"/etc/ssl\"",
-        .freebsd, .openbsd => "-DOPENSSLDIR=\"/etc/ssl\"",
-        .netbsd => "-DOPENSSLDIR=\"/etc/openssl\"",
-        .dragonfly => "-DOPENSSLDIR=\"/usr/local/etc/openssl\"",
-        .illumos => "-DOPENSSLDIR=\"/etc/ssl\"",
+        // openssl to search at runtime for this directory. Only the three
+        // supported OSes are reachable (the variant lookup above panics
+        // otherwise); Windows has no POSIX /etc so it gets upstream's mingw
+        // default.
+        .windows => "-DOPENSSLDIR=\"C:\\\\Program Files\\\\Common Files\\\\SSL\"",
         else => "-DOPENSSLDIR=\"/etc/ssl\"",
     };
 
     const base_flags = [_][]const u8{
-        "-DAES_ASM",
         "-DENGINESDIR=\"/dev/null\"",
         "-DL_ENDIAN",
         "-DMODULESDIR=\"/dev/null\"",
@@ -34,27 +74,30 @@ pub fn build(b: *std.Build) void {
         "-DOPENSSL_USE_NODELETE",
     };
 
-    const crypto_flags = base_flags ++ [_][]const u8{
-        "-DBSAES_ASM",
-        "-DCMLL_ASM",
-        "-DECP_NISTZ256_ASM",
-        "-DGHASH_ASM",
-        "-DKECCAK1600_ASM",
-        "-DMD5_ASM",
-        "-DOPENSSL_BN_ASM_GF2m",
-        "-DOPENSSL_BN_ASM_MONT",
-        "-DOPENSSL_BN_ASM_MONT5",
-        "-DOPENSSL_CPUID_OBJ",
-        "-DOPENSSL_IA32_SSE2",
-        "-DPOLY1305_ASM",
-        "-DRC4_ASM",
-        "-DSHA1_ASM",
-        "-DSHA256_ASM",
-        "-DSHA512_ASM",
-        "-DVPAES_ASM",
-        "-DWHIRLPOOL_ASM",
-        "-DX25519_ASM",
-    };
+    // base_flags plus the *_ASM feature macros matching the generated asm
+    // (see crypto/*/build.info upstream).
+    const defines = arch_config.defines;
+    var c_flags = std.ArrayList([]const u8).initCapacity(
+        b.allocator,
+        base_flags.len + defines.len,
+    ) catch @panic("OOM");
+    c_flags.appendSliceAssumeCapacity(&base_flags);
+    for (defines) |define|
+        c_flags.appendAssumeCapacity(b.fmt("-D{s}", .{define}));
+    if (target.result.os.tag == .windows) {
+        // Mirrors upstream mingw-common cppflags (Configurations/10-main.conf).
+        // WIN32_LEAN_AND_MEAN also keeps wincrypt.h (and its X509_NAME macro,
+        // which collides with OpenSSL's type) out of <windows.h>.
+        c_flags.appendSlice(b.allocator, &.{
+            "-DUNICODE", "-D_UNICODE", "-DWIN32_LEAN_AND_MEAN", "-D_MT",
+        }) catch @panic("OOM");
+        // System libraries the Windows sources pull in (upstream mingw-common
+        // ex_libs plus advapi32 for rand_win.c's CryptGenRandom and crypt32
+        // for winstore_store.c's cert store): recorded on the module so
+        // consumers linking this static lib inherit them.
+        for ([_][]const u8{ "ws2_32", "gdi32", "advapi32", "crypt32" }) |sys_lib|
+            mod.linkSystemLibrary(sys_lib, .{});
+    }
 
     mod.addCSourceFiles(.{
         .root = upstream.path("ssl"),
@@ -154,7 +197,7 @@ pub fn build(b: *std.Build) void {
             "tls_depr.c",
             "tls_srp.c",
         },
-        .flags = &base_flags,
+        .flags = c_flags.items,
     });
 
     mod.addCSourceFiles(.{
@@ -188,7 +231,10 @@ pub fn build(b: *std.Build) void {
             "baseprov.c",
             "defltprov.c",
             "prov_running.c",
-            //"implementations/storemgmt/winstore_store.c",
+            // winstore_store.c added below, Windows-only (upstream enables
+            // winstore there; the generated Windows configuration.h does not
+            // define OPENSSL_NO_WINSTORE, so defltprov/baseprov reference
+            // ossl_winstore_store_functions).
             "implementations/storemgmt/file_store.c",
             "implementations/storemgmt/file_store_any2obj.c",
             "implementations/keymgmt/kdf_legacy_kmgmt.c",
@@ -199,11 +245,6 @@ pub fn build(b: *std.Build) void {
             "implementations/keymgmt/dh_kmgmt.c",
             "implementations/keymgmt/ecx_kmgmt.c",
             "implementations/rands/seeding/rand_tsc.c",
-            //"implementations/rands/seeding/rand_win.c",
-            //"implementations/rands/seeding/rand_cpu_arm64.c",
-            //"implementations/rands/seeding/rand_vms.c",
-            "implementations/rands/seeding/rand_unix.c",
-            //"implementations/rands/seeding/rand_vxworks.c",
             "implementations/rands/seeding/rand_cpu_x86.c",
             "implementations/rands/crngt.c",
             "implementations/rands/drbg.c",
@@ -355,11 +396,11 @@ pub fn build(b: *std.Build) void {
             "implementations/encode_decode/endecoder_common.c",
             "implementations/encode_decode/encode_key2ms.c",
         },
-        .flags = &base_flags,
+        .flags = c_flags.items,
     });
 
     mod.addCSourceFiles(.{
-        .root = b.path("providers"),
+        .root = local_providers,
         .files = &.{
             "common/der/der_digests_gen.c",
             "common/der/der_ec_gen.c",
@@ -369,8 +410,35 @@ pub fn build(b: *std.Build) void {
             "common/der/der_dsa_gen.c",
             "common/der/der_rsa_gen.c",
         },
-        .flags = &base_flags,
+        .flags = c_flags.items,
     });
+
+    // Arch-specific C sources: the asm-backed glue plus the C files the other
+    // arch replaces with asm but this one keeps (see config.zig).
+    mod.addCSourceFiles(.{
+        .root = upstream.path("crypto"),
+        .files = arch_config.sources,
+        .flags = c_flags.items,
+    });
+
+    // OS-specific entropy seeding source (upstream picks it via Configure).
+    mod.addCSourceFiles(.{
+        .root = upstream.path("providers"),
+        .files = &.{switch (target.result.os.tag) {
+            .windows => "implementations/rands/seeding/rand_win.c",
+            else => "implementations/rands/seeding/rand_unix.c",
+        }},
+        .flags = c_flags.items,
+    });
+
+    // Windows-only store provider (enabled by upstream on Windows).
+    if (target.result.os.tag == .windows) {
+        mod.addCSourceFiles(.{
+            .root = upstream.path("providers"),
+            .files = &.{"implementations/storemgmt/winstore_store.c"},
+            .flags = c_flags.items,
+        });
+    }
 
     mod.addCSourceFiles(.{
         .root = upstream.path("crypto"),
@@ -381,17 +449,13 @@ pub fn build(b: *std.Build) void {
             //"LPdir_win.c",
             //"LPdir_win32.c",
             //"LPdir_wince.c",
-            "aes/aes_cbc.c",
             "aes/aes_cfb.c",
-            //"aes/aes_x86core.c",
-            //"aes/aes_core.c",
             "aes/aes_ecb.c",
             "aes/aes_ige.c",
             "aes/aes_misc.c",
             "aes/aes_ofb.c",
             "aes/aes_wrap.c",
             "aria/aria.c",
-            //"armcap.c",
             "asn1/a_bitstr.c",
             "asn1/a_d2i_fp.c",
             "asn1/a_digest.c",
@@ -496,9 +560,7 @@ pub fn build(b: *std.Build) void {
             "bio/bss_null.c",
             "bio/bss_sock.c",
             "bio/ossl_core_bio.c",
-            "bn/asm/x86_64-gcc.c",
             "bn/bn_add.c",
-            "bn/bn_asm.c",
             "bn/bn_blind.c",
             "bn/bn_const.c",
             "bn/bn_conv.c",
@@ -533,13 +595,9 @@ pub fn build(b: *std.Build) void {
             "bn/bn_srp.c",
             "bn/bn_word.c",
             "bn/bn_x931p.c",
-            "bn/rsaz_exp.c",
-            "bn/rsaz_exp_x2.c",
             "bsearch.c",
             "buffer/buf_err.c",
             "buffer/buffer.c",
-            "camellia/camellia.c",
-            "camellia/cmll_cbc.c",
             "camellia/cmll_cfb.c",
             "camellia/cmll_ctr.c",
             "camellia/cmll_ecb.c",
@@ -550,9 +608,7 @@ pub fn build(b: *std.Build) void {
             "cast/c_enc.c",
             "cast/c_ofb64.c",
             "cast/c_skey.c",
-            "chacha/chacha_enc.c",
-            //"chacha/chacha_ppc.c",
-            //"chacha/chacha_riscv.c",
+            // chacha_enc.c is replaced by chacha asm on every supported arch.
             "cmac/cmac.c",
             "cmp/cmp_asn.c",
             "cmp/cmp_client.c",
@@ -719,13 +775,12 @@ pub fn build(b: *std.Build) void {
             "ec/ecp_nistp384.c",
             "ec/ecp_nistp521.c",
             "ec/ecp_nistputil.c",
-            "ec/ecp_nistz256.c",
-            //"ec/ecp_nistz256_table.c",
+            // ecp_nistz256.c is compiled by the nistz256 asm component (see
+            // config.zig); ecp_nistz256_table.c is #included by it, not built
+            // standalone.
             "ec/ecp_oct.c",
             //"ec/ecp_ppc.c",
             //"ec/ecp_s390x_nistp.c",
-            "ec/ecp_sm2p256.c",
-            "ec/ecp_sm2p256_table.c",
             "ec/ecp_smpl.c",
             "ec/ecx_backend.c",
             "ec/ecx_key.c",
@@ -878,7 +933,6 @@ pub fn build(b: *std.Build) void {
             "kdf/kdf_err.c",
             "lhash/lh_stats.c",
             "lhash/lhash.c",
-            "loongarchcap.c",
             //"md2/md2_dgst.c",
             //"md2/md2_one.c",
             "md4/md4_dgst.c",
@@ -997,8 +1051,6 @@ pub fn build(b: *std.Build) void {
             "rc2/rc2_skey.c",
             "rc2/rc2cfb64.c",
             "rc2/rc2ofb64.c",
-            "rc4/rc4_enc.c",
-            "rc4/rc4_skey.c",
             //"rc5/rc5_ecb.c",
             //"rc5/rc5_enc.c",
             //"rc5/rc5_skey.c",
@@ -1041,7 +1093,7 @@ pub fn build(b: *std.Build) void {
             "seed/seed_ecb.c",
             "seed/seed_ofb.c",
             "self_test_core.c",
-            "sha/keccak1600.c",
+            // keccak1600.c is replaced by keccak asm on every supported arch.
             "sha/sha1_one.c",
             "sha/sha1dgst.c",
             "sha/sha256.c",
@@ -1101,7 +1153,6 @@ pub fn build(b: *std.Build) void {
             "ui/ui_openssl.c",
             "ui/ui_util.c",
             "uid.c",
-            "whrlpool/wp_block.c",
             "whrlpool/wp_dgst.c",
             "x509/by_dir.c",
             "x509/by_file.c",
@@ -1186,73 +1237,43 @@ pub fn build(b: *std.Build) void {
             "x509/x_x509.c",
             "x509/x_x509a.c",
         },
-        .flags = &crypto_flags,
+        .flags = c_flags.items,
     });
 
-    switch (target.result.cpu.arch) {
-        .x86_64 => mod.addCSourceFiles(.{
-            .root = b.path("crypto"),
-            .files = &.{
-                "aes/aes-x86_64.s",
-                "aes/aesni-mb-x86_64.s",
-                "aes/aesni-sha1-x86_64.s",
-                "aes/aesni-sha256-x86_64.s",
-                "aes/aesni-x86_64.s",
-                "aes/bsaes-x86_64.s",
-                "aes/vpaes-x86_64.s",
-                "bn/rsaz-x86_64.s",
-                "camellia/cmll-x86_64.s",
-                "chacha/chacha-x86_64.s",
-                "ec/ecp_nistz256-x86_64.s",
-                "ec/x25519-x86_64.s",
-                "ec/x25519-x86_64.s",
-                "md5/md5-x86_64.s",
-                "modes/aesni-gcm-x86_64.s",
-                "modes/ghash-x86_64.s",
-                "poly1305/poly1305-x86_64.s",
-                "rc4/rc4-md5-x86_64.s",
-                "rc4/rc4-x86_64.s",
-                "sha/keccak1600-x86_64.s",
-                "sha/sha1-mb-x86_64.s",
-                "sha/sha1-x86_64.s",
-                "sha/sha256-mb-x86_64.s",
-                "sha/sha256-x86_64.s",
-                "sha/sha512-x86_64.s",
-                "whrlpool/wp-x86_64.s",
-
-                "x86_64cpuid.s",
-                "bn/x86_64-gf2m.s",
-                "bn/x86_64-mont5.s",
-                "bn/x86_64-mont.s",
-                "bn/rsaz-avx2.s",
-                "bn/rsaz-2k-avx512.s",
-                "bn/rsaz-3k-avx512.s",
-                "bn/rsaz-4k-avx512.s",
-
-                "modes/aes-gcm-avx512.s",
-            },
-            .flags = &crypto_flags,
-        }),
-        else => {},
+    {
+        const scripts = arch_config.scripts;
+        var files = std.ArrayList([]const u8).initCapacity(b.allocator, scripts.len) catch @panic("OOM");
+        for (scripts) |s|
+            files.appendAssumeCapacity(b.fmt("{s}{s}", .{ s.output, arch_config.asm_ext }));
+        mod.addCSourceFiles(.{ .root = asm_root, .files = files.items });
     }
 
     mod.addCSourceFiles(.{
-        .root = b.path("crypto"),
+        .root = local_crypto,
         .files = &.{
             "params_idx.c",
         },
-        .flags = &crypto_flags,
+        .flags = c_flags.items,
     });
 
     mod.addIncludePath(upstream.path("."));
     mod.addIncludePath(upstream.path("include"));
-    mod.addIncludePath(b.path("include"));
+    // arm_arch.h for the preprocessed aarch64 asm; upstream also compiles
+    // libcrypto with this on the include path.
+    mod.addIncludePath(upstream.path("crypto"));
+    mod.addIncludePath(shared_include);
+    // Target-dependent generated headers (configuration.h, bn_conf.h,
+    // dso_conf.h) live next to the variant's generated asm.
+    mod.addIncludePath(variant_include);
     mod.addIncludePath(upstream.path("providers/common/include"));
     mod.addIncludePath(upstream.path("providers/implementations/include"));
+    // The checked-in crypto/ dir: buildinf.h lives there and is committed by
+    // hand (not template-generated).
     mod.addIncludePath(b.path("crypto"));
 
     lib.installHeadersDirectory(upstream.path("include"), "", .{});
-    lib.installHeadersDirectory(b.path("include"), "", .{});
+    lib.installHeadersDirectory(shared_include, "", .{});
+    lib.installHeadersDirectory(variant_include, "", .{});
 
     b.installArtifact(lib);
 }

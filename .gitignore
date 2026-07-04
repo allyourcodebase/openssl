@@ -1,3 +1,6 @@
 /.zig-cache
 /zig-out
 /zig-pkg
+# perlasm $CC probe byproduct left in cwd by `zig build gen`
+/null.o
+
